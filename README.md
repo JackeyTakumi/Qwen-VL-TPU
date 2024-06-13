@@ -82,13 +82,13 @@ usage: ./run.sh [--dev_id DEV_ID] [--server_address SERVER_ADDRESS] [--server_po
 
 ## 操作说明
 
-![UI](<./assets/file_example.png>)
-![Anwer](<./assets/answer_example.png>)
-
 ### 上传图片简介
-![UI](<./assets/file_example.png>)
+
 Qwen-VL初始界面提供了简洁的传输图片按钮，用户可以通过浏览文件上传本地图片。
+![UI](<./assets/file_example.png>)
+
 ### 问答界面简介
-![Anwer](<./assets/answer_example.png>)
+
 图片上传并读取成功后，将会以缩略图的形式显示于左上侧小窗中，同时会话机器人将准备就绪接受用户问题。用户可根据其需求针对图片中的内容向会话机器人进行提问，完成问答流程。
+![Anwer](<./assets/answer_example.png>)
 
