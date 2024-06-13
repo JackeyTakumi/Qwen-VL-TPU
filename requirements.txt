@@ -1,0 +1,7 @@
+transformers==4.36.0
+torch
+torchvision
+Pillow
+streamlit
+tiktoken
+matplotlib
