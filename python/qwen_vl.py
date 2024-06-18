@@ -187,7 +187,7 @@ class Qwen:
         return tensor
 
     # inference for the first token
-    def forward_first(self, token, images):
+    def forward_first(self, token, images, img_pos):
         input_ids = np.zeros(self.SEQLEN, type_convert(self.first_embed_input["dtype"]))
         input_ids[:min(self.SEQLEN, len(token))] = token
         input_ids = input_ids.reshape(1, -1)
@@ -196,7 +196,8 @@ class Qwen:
         for i in range(self.token_length):
             position_id[i] = i
 
-        attention_mask = np.ones(self.SEQLEN*self.SEQLEN, type_convert(self.first_attention["dtype"])) * (-6.109375)
+        # attention_mask = np.ones(self.SEQLEN*self.SEQLEN, type_convert(self.first_attention["dtype"])) * (-6.109375)
+        attention_mask = np.ones(self.SEQLEN*self.SEQLEN, type_convert(self.first_attention["dtype"])) * (-10000.0)
         for i in range(self.token_length):
             for j in range(self.SEQLEN):
                 if (j <= i):
@@ -216,12 +217,21 @@ class Qwen:
         output_vit_tensors = {self.vit_output["name"]: self.vit_output["data"]}
         self.vit.process(self.name_vit, input_vit_tensors, output_vit_tensors)
 
+
+
+        # concatenate text embedding and image embedding
+        text_emb = self.first_embed_output["data"].asnumpy()
+        img_emb = self.vit_output["data"].asnumpy()
+        _, begin, end = img_pos[0]
+        text_emb[0][begin+1:end] = img_emb[0]
+        self.first_embed_output["data"].update_data(text_emb)
+
         # blocks
         self.first_hidden_tensor = self.first_embed_output["data"]
         self.first_hidden_tensor.reshape(self.first_hidden_input["shape"])
         self.first_pid["data"].update_data(position_id.reshape(self.first_pid["shape"]))
-        # self.first_attention["data"].update_data(fp16_cast(attention_mask.reshape(self.first_attention["shape"]))) # set bf16 in the future.
-        self.first_attention["data"].update_data(attention_mask.reshape(self.first_attention["shape"]).view(np.uint16))
+        self.first_attention["data"].update_data(fp16_cast(attention_mask.reshape(self.first_attention["shape"]))) # set bf16 in the future.
+        # self.first_attention["data"].update_data(attention_mask.reshape(self.first_attention["shape"]).view(np.uint16))
 
         input_blocks_tensors = {self.first_hidden_input["name"]: self.first_hidden_tensor, 
                                 self.first_pid["name"]: self.first_pid["data"], 
@@ -232,9 +242,8 @@ class Qwen:
             output_blocks_tensors = {self.first_hidden_output["name"]: self.first_hidden_tensor,
                                     self.past_key_output[i]["name"]: self.past_key_output[i]["data"],
                                     self.past_value_output[i]["name"]: self.past_value_output[i]["data"]}
-            
             self.net.process(self.name_blocks[i], input_blocks_tensors, output_blocks_tensors)
-        
+
         # get the last token info as Lm head input
         copy_len = self.first_hidden_tensor.shape()[-1]
         self.lm_input["data"].sync_d2d(self.first_hidden_tensor,
@@ -247,19 +256,21 @@ class Qwen:
         
         # Lm_head Inference
         self.net.process(self.name_lm, input_lm_tensors, output_lm_tensors)
-        
+
         
         # sample
         input_sample_tensor = {self.sample_input["name"]: self.lm_output["data"]}
         output_sample_tensor = {self.sample_output["name"]: self.sample_output["data"]}
         self.net.process(self.name_sample, input_sample_tensor, output_sample_tensor)
+
         return int(self.sample_output["data"].asnumpy()[0][0])
 
     # The following tokens prediction
     def forward_next(self, ):
         attention_mask = np.zeros(self.SEQLEN+1, type_convert(self.next_attention["dtype"]))
         for i in range(self.token_length-1, self.SEQLEN):
-            attention_mask[i] = -6.109375
+            # attention_mask[i] = -6.109375
+            attention_mask[i] = -10000.0
         position_id = np.array(self.token_length - 1, type_convert(self.next_pid["dtype"]))
 
         # embedding
@@ -273,8 +284,8 @@ class Qwen:
         
         # blocks
         self.next_pid["data"].update_data(position_id.reshape(self.next_pid["shape"]))
-        # self.next_attention["data"].update_data(fp16_cast(attention_mask.reshape(self.next_attention["shape"])))
-        self.next_attention["data"].update_data(attention_mask.reshape(self.next_attention["shape"]).view(np.uint16))
+        self.next_attention["data"].update_data(fp16_cast(attention_mask.reshape(self.next_attention["shape"])))
+        # self.next_attention["data"].update_data(attention_mask.reshape(self.next_attention["shape"]).view(np.uint16))
 
         self.next_hidden_tensor = self.next_embed_output["data"]
         self.next_hidden_tensor.reshape(self.next_hidden_input["shape"])
@@ -312,13 +323,13 @@ class Qwen:
         
         return int(self.sample_output["data"].asnumpy()[0][0])
 
-    def chat_stream(self, input, history, system=''):
+    def chat_stream(self, input, image, history, system=''):
         MAX_WINDOW_SIZE = 6144
         CHAT_FORMAT = 'chatml'
         sys_prompt = 'You are a helpful assistant.'
         query = self.sp.from_list_format([
-            {'image': 'https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg'},
-            {'text': '这是什么'},
+            {'image': 'test_url'},
+            {'text': input},
         ])
         _, ids = make_context(
             self.sp,
@@ -335,7 +346,6 @@ class Qwen:
         img_pos = torch.stack((bos_pos[0], bos_pos[1], eos_pos[1]), dim=1)
 
         images = []
-        image_paths = ['https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg']
         image_size = 448
         mean = (0.48145466, 0.4578275, 0.40821073)
         std = (0.26862954, 0.26130258, 0.27577711)
@@ -347,48 +357,33 @@ class Qwen:
                 transforms.ToTensor(),
                 transforms.Normalize(mean=mean, std=std),
         ])
-        for image_path in image_paths:
-            if image_path.startswith("http://") or image_path.startswith("https://"):
-                image = Image.open(requests.get(image_path, stream=True).raw)
-            else:
-                image = Image.open(image_path)
-            image = image.convert("RGB")
-            images.append(image_transform(image))
+        
+
+        image = image.convert("RGB")
+        images.append(image_transform(image))
         images = torch.stack(images, dim=0)
-
-        ###
-        # query = self.sp.from_list_format([
-        #     {'image': 'https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg'},
-        #     {'text': '这是什么'},
-        # ])
-        # input = query
-        # ###
-        # _, input_tokens = make_context(self.sp, query=input, max_window_size=self.SEQLEN)
         
-        # if (len(input_tokens) > self.SEQLEN / 3):
-        #     yield '##INPUT_TOO_LONG'
-        #     return
-
         tok_num = 0
-        # _, tokens = make_context(self.sp, query=input, 
-        #                 history=history,
-        #                 system=system,
-        #                 max_window_size=self.SEQLEN,
-        #                 chat_format="chatml")
-        # while (len(tokens) > self.SEQLEN / 2):
-        #     if (len(history) > 0):
-        #         history = history[1:]
-        #     else:
-        #         system = ''
-        #     _, tokens = make_context(self.sp, query=input, 
-        #                     history=history,
-        #                     system=system,
-        #                     max_window_size=self.SEQLEN,
-        #                     chat_format="chatml")
         
+        print(history)
+        print(len(ids))
+        
+        while (len(ids) > self.SEQLEN / 2):
+            if (len(history) > 0):
+                history = history[1:]
+            else:
+                system = ''
+                _, ids = make_context(
+                    self.sp,
+                    query,
+                    history=[],
+                    system=sys_prompt,
+                    max_window_size=MAX_WINDOW_SIZE,
+                    chat_format=CHAT_FORMAT,
+                )
         tokens = ids
         first_start = time.time()
-        token = self.forward_first(tokens, images)
+        token = self.forward_first(tokens, images, img_pos)
         first_end = time.time()
         while token != self.EOS and self.token_length < self.SEQLEN:
             diff = self.sp.decode([token])
@@ -422,25 +417,3 @@ def app(client):
             assistant_msg = response
             print(response, flush=True, end='')
         history.append([input_str, assistant_msg])
-
-def main(args):
-    handles = [sail.Handle(i) for i in args.dev_id]
-    tokenizer = AutoTokenizer.from_pretrained(args.token, trust_remote_code=True)
-    engine_llm = sail.Engine(args.bmodel, args.dev_id[0], sail.IOMode.DEVIO)
-    engine_vit = sail.Engine(args.vitmodel, args.dev_id[1], sail.IOMode.DEVIO)
-    client = Qwen(handles, engine_llm, engine_vit, tokenizer)
-    app(client)
-
-def argsparser():
-    parser = argparse.ArgumentParser(prog=__file__)
-    parser.add_argument('--bmodel', type=str, default='./models/BM1684X/qwen-7b_int4_1dev.bmodel', help='path of bmodel')
-    parser.add_argument('--vitmodel', type=str, default='')
-    parser.add_argument('--token', type=str, default='./python/token_config/', help='path of tokenizer')
-    parser.add_argument('--dev_id', type=list, default=[0, 1], help='dev id')
-    args = parser.parse_args()
-    return args
-
-if __name__ == "__main__":
-    args = argsparser()
-    main(args)
-    print('all done')

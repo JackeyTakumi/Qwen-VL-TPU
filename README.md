@@ -66,17 +66,10 @@ pip3 install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ./run.sh
 ```
 
-```bash
-usage: ./run.sh [--dev_id DEV_ID] [--server_address SERVER_ADDRESS] [--server_port SERVER_PORT]
---dev_id: 用于推理的 TPU 设备 ID。默认为 0,1
---server_address: web server 地址。默认为 "0.0.0.0"
---server_port：web sever 端口。如不设置，从 8501 起自动分配
-```
-
 启动后您可以通过浏览器打开，`URL: http://{host_ip}:8501`，host_ip为启动Qwen-VL的设备IP，或者您通过参数设置的`server_address`
 
 > **说明**：
->1. 在 `config.ini` 中可修改模型路径，默认使用int4模型
+>1. 在 `config.ini` 中可修改模型路径，默认使用int8模型
 >2. dev_id 需设置为 BM1684X 设备id
 >3. 使用 2k seq_len 模型
 

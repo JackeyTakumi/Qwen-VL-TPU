@@ -3,11 +3,14 @@ import sophon.sail as sail
 from qwen_vl import Qwen
 from transformers import AutoTokenizer
 from PIL import Image
+import configparser
 
-token_path = './supports/token_config'
-bmodel_path = '../../qwen-vl-chat_int4_seq512_1dev.bmodel'
-vit_path = '../../qwen_vit_1684x_bf16.bmodel'
-dev_id = [0,1]
+config = configparser.ConfigParser()
+config.read('python/supports/config.ini')
+token_path = config.get('qwenvl','token_path')
+bmodel_path = config.get('qwenvl','bmodel_path')
+vit_path = config.get('qwenvl','vit_path')
+dev_id = list(map(int, config.get('qwenvl','dev_id').split(',')))
 
 st.title("Qwen-VL")
 
@@ -16,12 +19,10 @@ def display_uploaded_image(image):
     st.sidebar.image(image, caption='Uploaded Image', use_column_width=True)
 
 uploaded_file = st.file_uploader("上传图片", type=["jpg", "jpeg", "png"])
-# print(type(uploaded_file))
 
 # Check if a file was uploaded
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
-    print(type(image))
 
     # Display the uploaded image in the sidebar
     display_uploaded_image(uploaded_file)
@@ -35,7 +36,8 @@ if uploaded_file is not None:
         return sail.Engine(vit_path, dev_id[1], sail.IOMode.DEVIO)
 
     @st.cache_resource
-    def get_engine():
+    def get_llm():
+        breakpoint()
         return sail.Engine(bmodel_path, dev_id[0], sail.IOMode.DEVIO)
 
     @st.cache_resource
@@ -45,21 +47,25 @@ if uploaded_file is not None:
     # Initialize chat history
     if "messages" not in st.session_state:
         st.session_state.messages = []
-
+    
     # Initialize sail.Handle
     if "handles" not in st.session_state:
         st.session_state.handles = get_handles()
     
     # Initialize sail.Engine
-    if "engine" not in st.session_state:
-        st.session_state.engine = get_engine()
+    if "llm_engine" not in st.session_state:
+        st.session_state.llm_engine = get_llm()
 
-    if "vit" not in st.session_state:
-        st.session_state.vit = get_vit()
+    if "vit_engine" not in st.session_state:
+        st.session_state.vit_engine = get_vit()
 
     # Initialize Tokenizer
     if "tokenizer" not in st.session_state:
         st.session_state.tokenizer = get_tokenizer()
+
+    # Initialize client
+    if "client" not in st.session_state:
+        st.session_state.client = Qwen(st.session_state.handles, st.session_state.llm_engine, st.session_state.vit_engine, st.session_state.tokenizer)
 
     # Display chat messages from history on app rerun
     for message in st.session_state.messages:
@@ -73,12 +79,9 @@ if uploaded_file is not None:
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        client = Qwen(st.session_state.handles, st.session_state.engine, st.session_state.vit, st.session_state.tokenizer)
-
         # Display assistant response in chat message container
         with st.chat_message("assistant"):
-        
-            stream = client.chat_stream(input=prompt, history=[[m["role"], m["content"]] for m in st.session_state.messages])
+            stream = st.session_state.client.chat_stream(input=prompt, image=image, history=[[m["role"], m["content"]] for m in st.session_state.messages])
             response = st.write_stream(stream)
 
             # Add assistant message to chat history
