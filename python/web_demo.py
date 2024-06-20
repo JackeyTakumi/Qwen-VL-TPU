@@ -37,7 +37,6 @@ if uploaded_file is not None:
 
     @st.cache_resource
     def get_llm():
-        breakpoint()
         return sail.Engine(bmodel_path, dev_id[0], sail.IOMode.DEVIO)
 
     @st.cache_resource
