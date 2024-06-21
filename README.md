@@ -1,6 +1,6 @@
 # Qwen-VL-TPU <!-- omit in toc -->
 
-本项目基于 Sophgo TPU 实现的多模态模型会话工具。项目可在多芯 BM1684X 加速卡上独立部署运行。
+本项目基于 Sophgo TPU 实现的多模态模型会话工具。项目可在 BM1684X 环境上独立部署运行，支持 PCIE 与 SOC模式。
 
 - [介绍](#介绍)
 - [特点](#特点)
@@ -71,7 +71,7 @@ pip3 install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 > **说明**：
 >1. 在 `config.ini` 中可修改模型路径，默认使用int8模型
 >2. dev_id 需设置为 BM1684X 设备id
->3. 使用 2k seq_len 模型
+>3. 使用 1k seq_len 模型
 
 ## 操作说明
 

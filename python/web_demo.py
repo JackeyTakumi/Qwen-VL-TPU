@@ -9,8 +9,7 @@ config = configparser.ConfigParser()
 config.read('python/supports/config.ini')
 token_path = config.get('qwenvl','token_path')
 bmodel_path = config.get('qwenvl','bmodel_path')
-vit_path = config.get('qwenvl','vit_path')
-dev_id = list(map(int, config.get('qwenvl','dev_id').split(',')))
+dev_id = int(config.get('qwenvl', 'dev_id'))
 
 st.title("Qwen-VL")
 
@@ -18,7 +17,9 @@ st.title("Qwen-VL")
 def display_uploaded_image(image):
     st.sidebar.image(image, caption='Uploaded Image', use_column_width=True)
 
-uploaded_file = st.file_uploader("上传图片", type=["jpg", "jpeg", "png"])
+# uploaded_file = st.file_uploader("上传图片", type=["jpg", "jpeg", "png"])
+with st.sidebar:
+    uploaded_file = st.file_uploader("上传图片", type=["jpg", "jpeg", "png"])
 
 # Check if a file was uploaded
 if uploaded_file is not None:
@@ -28,16 +29,17 @@ if uploaded_file is not None:
     display_uploaded_image(uploaded_file)
 
     @st.cache_resource
-    def get_handles():
-        return [sail.Handle(i) for i in dev_id]
+    def get_handle():
+        return sail.Handle(dev_id)
 
-    @st.cache_resource
-    def get_vit():
-        return sail.Engine(vit_path, dev_id[1], sail.IOMode.DEVIO)
+    # @st.cache_resource
+    # def get_vit():
+    #     return sail.Engine(vit_path, dev_id[1], sail.IOMode.DEVIO)
 
     @st.cache_resource
     def get_llm():
-        return sail.Engine(bmodel_path, dev_id[0], sail.IOMode.DEVIO)
+        # return sail.Engine(bmodel_path, dev_id, sail.IOMode.DEVIO)
+        return sail.EngineLLM(bmodel_path, [dev_id])
 
     @st.cache_resource
     def get_tokenizer():
@@ -48,15 +50,12 @@ if uploaded_file is not None:
         st.session_state.messages = []
     
     # Initialize sail.Handle
-    if "handles" not in st.session_state:
-        st.session_state.handles = get_handles()
+    if "handle" not in st.session_state:
+        st.session_state.handle = get_handle()
     
     # Initialize sail.Engine
     if "llm_engine" not in st.session_state:
         st.session_state.llm_engine = get_llm()
-
-    if "vit_engine" not in st.session_state:
-        st.session_state.vit_engine = get_vit()
 
     # Initialize Tokenizer
     if "tokenizer" not in st.session_state:
@@ -64,7 +63,9 @@ if uploaded_file is not None:
 
     # Initialize client
     if "client" not in st.session_state:
-        st.session_state.client = Qwen(st.session_state.handles, st.session_state.llm_engine, st.session_state.vit_engine, st.session_state.tokenizer)
+        st.session_state.client = Qwen(st.session_state.handle, st.session_state.llm_engine, st.session_state.tokenizer)
+        st.success('模型初始化完成！欢迎您根据图片提出问题，我将会为您解答。', icon='🎉')
+        st.balloons()
 
     # Display chat messages from history on app rerun
     for message in st.session_state.messages:

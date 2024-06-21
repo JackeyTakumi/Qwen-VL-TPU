@@ -17,8 +17,7 @@ if [ ! -d "./models" ]; then
     mkdir -p ./models
     pushd models
     # download the models
-    python3 -m dfss --url=open@sophgo.com:ext_model_information/LLM/LLM-TPU/qwen-vl-chat_int8_seq1024_1dev_f16.bmodel
-    python3 -m dfss --url=open@sophgo.com:ext_model_information/LLM/LLM-TPU/qwen_vit_1684x_f16.bmodel
+    python3 -m dfss --url=open@sophgo.com:ext_model_information/LLM/LLM-TPU/qwen-vl-chat-combine.bmodel
     popd
     echo "qwenvl_model download!"
 else

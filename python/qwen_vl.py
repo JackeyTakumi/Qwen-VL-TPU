@@ -43,8 +43,8 @@ def fp16_cast(arr:np.ndarray): #这个接口的作用在于把np.float16假冒�
         return arr
 
 class Qwen:
-    def __init__(self, handles, engine_llm, engine_vit, tokenizer):
-        self.handles = handles
+    def __init__(self, handle, engine_llm, tokenizer):
+        self.handle = handle
         self.sp = tokenizer
         
         # warm up
@@ -54,13 +54,13 @@ class Qwen:
         # load bmodel
         # 这里devio，后面都没有创建系统内存的tensor
         self.net = engine_llm
-        self.vit = engine_vit
+        
         self.graph_names = self.net.get_graph_names()
 
         # initialize qwen parameters
         self.NUM_LAYERS = (len(self.graph_names) - 5) // 2
-        self.first_hidden_input_shape = self.net.get_input_shape("block_0", self.net.get_input_names("block_0")[0])
-        self.vit_input_shape = self.vit.get_input_shape("qwen_vit", self.vit.get_input_names("qwen_vit")[0])
+        self.first_hidden_input_shape = self.net.get_input_shape("block_0", 0)
+        self.vit_input_shape = self.net.get_input_shape("qwen_vit", 0)
         _, self.SEQLEN, self.HIDDEN_SIZE = self.first_hidden_input_shape
 
         # initialize net name
@@ -75,6 +75,7 @@ class Qwen:
 
         # initialize tensors (inputs & outputs)
         # forward_first: embedding_tensor
+
         self.first_embed_input = self.init_sail_tensor(self.name_embed, 0, [1, self.SEQLEN])
         self.first_embed_output = self.init_sail_tensor(self.name_embed, 0, [1, self.SEQLEN, self.HIDDEN_SIZE], False)
 
@@ -131,35 +132,10 @@ class Qwen:
         self.sample_output = self.init_sail_tensor(self.name_sample, 0, None, False)
         
         # vit tensor
-        self.vit_input = self.init_vit_tensor(self.name_vit, 0)
-        self.vit_output = self.init_vit_tensor(self.name_vit, 0, None, False)
+        self.vit_input = self.init_sail_tensor(self.name_vit, 0)
+        self.vit_output = self.init_sail_tensor(self.name_vit, 0, None, False)
 
         self.token_length = 0
-    
-    def init_vit_tensor(self, name, tensor_idx, shape=None, is_input=True):
-        """
-        init a sail tensor of sail.engine.
-        parameters:
-        input:
-            name: str, graph_name/net_name
-            tensor_idx: int, input/output tensor id
-            shape: list[int], shape of tensor
-            is_input: bool, is input tensor or not
-        return:
-            dict
-        """
-        tensor = {}
-        if is_input:
-            tensor["name"] = self.vit.get_input_names(name)[tensor_idx]
-            tensor["shape"] = self.vit.get_input_shape(name, tensor["name"]) if shape is None else shape
-            tensor["dtype"] = self.vit.get_input_dtype(name, tensor["name"])
-            tensor["data"] = sail.Tensor(self.handles[1], tensor["shape"], tensor["dtype"], False, True)
-        else:
-            tensor["name"] = self.vit.get_output_names(name)[tensor_idx]
-            tensor["shape"] = self.vit.get_output_shape(name, tensor["name"]) if shape is None else shape
-            tensor["dtype"] = self.vit.get_output_dtype(name, tensor["name"])
-            tensor["data"] = sail.Tensor(self.handles[1], tensor["shape"], tensor["dtype"], False, True) 
-        return tensor
 
     def init_sail_tensor(self, name, tensor_idx, shape=None, is_input=True):
         """
@@ -176,14 +152,14 @@ class Qwen:
         tensor = {}
         if is_input:
             tensor["name"] = self.net.get_input_names(name)[tensor_idx]
-            tensor["shape"] = self.net.get_input_shape(name, tensor["name"]) if shape is None else shape
-            tensor["dtype"] = self.net.get_input_dtype(name, tensor["name"])
-            tensor["data"] = sail.Tensor(self.handles[0], tensor["shape"], tensor["dtype"], False, True)
+            tensor["shape"] = self.net.get_input_shape(name, tensor_idx) if shape is None else shape
+            tensor["dtype"] = self.net.get_input_dtype(name, tensor_idx)
+            tensor["data"] = sail.Tensor(self.handle, tensor["shape"], tensor["dtype"], False, True)
         else:
             tensor["name"] = self.net.get_output_names(name)[tensor_idx]
-            tensor["shape"] = self.net.get_output_shape(name, tensor["name"]) if shape is None else shape
-            tensor["dtype"] = self.net.get_output_dtype(name, tensor["name"])
-            tensor["data"] = sail.Tensor(self.handles[0], tensor["shape"], tensor["dtype"], False, True) 
+            tensor["shape"] = self.net.get_output_shape(name, tensor_idx) if shape is None else shape
+            tensor["dtype"] = self.net.get_output_dtype(name, tensor_idx)
+            tensor["data"] = sail.Tensor(self.handle, tensor["shape"], tensor["dtype"], False, True) 
         return tensor
 
     # inference for the first token
@@ -205,26 +181,24 @@ class Qwen:
         
         # embedding
         self.first_embed_input["data"].update_data(input_ids)
-        input_embed_tensors = {self.first_embed_input["name"]: self.first_embed_input["data"]}
-        output_embed_tensors = {self.first_embed_output["name"]: self.first_embed_output["data"]}
+        input_embed_tensors = {0: self.first_embed_input["data"]}
+        output_embed_tensors = {0: self.first_embed_output["data"]}
 
         # Embedding Layer Inference
         self.net.process(self.name_embed, input_embed_tensors, output_embed_tensors)
 
         # ViT Inference
         self.vit_input["data"].update_data(images)
-        input_vit_tensors = {self.vit_input["name"]: self.vit_input["data"]}
-        output_vit_tensors = {self.vit_output["name"]: self.vit_output["data"]}
-        self.vit.process(self.name_vit, input_vit_tensors, output_vit_tensors)
+        input_vit_tensors = {0: self.vit_input["data"]}
+        output_vit_tensors = {0: self.vit_output["data"]}
+        self.net.process(self.name_vit, input_vit_tensors, output_vit_tensors)
 
 
 
         # concatenate text embedding and image embedding
-        text_emb = self.first_embed_output["data"].asnumpy()
-        img_emb = self.vit_output["data"].asnumpy()
         _, begin, end = img_pos[0]
-        text_emb[0][begin+1:end] = img_emb[0]
-        self.first_embed_output["data"].update_data(text_emb)
+        img_pad_len = end-begin-1
+        self.first_embed_output["data"].sync_d2d(self.vit_output["data"], 0, int(begin*self.HIDDEN_SIZE), int(img_pad_len*self.HIDDEN_SIZE))
 
         # blocks
         self.first_hidden_tensor = self.first_embed_output["data"]
@@ -233,15 +207,15 @@ class Qwen:
         self.first_attention["data"].update_data(fp16_cast(attention_mask.reshape(self.first_attention["shape"]))) # set bf16 in the future.
         # self.first_attention["data"].update_data(attention_mask.reshape(self.first_attention["shape"]).view(np.uint16))
 
-        input_blocks_tensors = {self.first_hidden_input["name"]: self.first_hidden_tensor, 
-                                self.first_pid["name"]: self.first_pid["data"], 
-                                self.first_attention["name"]: self.first_attention["data"]}
+        input_blocks_tensors = {0: self.first_hidden_tensor, 
+                                1: self.first_pid["data"], 
+                                2: self.first_attention["data"]}
 
         # Transformer Block Inference
         for i in range(self.NUM_LAYERS):        
-            output_blocks_tensors = {self.first_hidden_output["name"]: self.first_hidden_tensor,
-                                    self.past_key_output[i]["name"]: self.past_key_output[i]["data"],
-                                    self.past_value_output[i]["name"]: self.past_value_output[i]["data"]}
+            output_blocks_tensors = {0: self.first_hidden_tensor,
+                                     1: self.past_key_output[i]["data"],
+                                     2: self.past_value_output[i]["data"]}
             self.net.process(self.name_blocks[i], input_blocks_tensors, output_blocks_tensors)
 
         # get the last token info as Lm head input
@@ -251,16 +225,16 @@ class Qwen:
                                       0, 
                                       copy_len)
         
-        input_lm_tensors = {self.lm_input["name"]: self.lm_input["data"]}
-        output_lm_tensors = {self.lm_output["name"]: self.lm_output["data"]}
+        input_lm_tensors = {0: self.lm_input["data"]}
+        output_lm_tensors = {0: self.lm_output["data"]}
         
         # Lm_head Inference
         self.net.process(self.name_lm, input_lm_tensors, output_lm_tensors)
 
         
         # sample
-        input_sample_tensor = {self.sample_input["name"]: self.lm_output["data"]}
-        output_sample_tensor = {self.sample_output["name"]: self.sample_output["data"]}
+        input_sample_tensor = {0: self.lm_output["data"]}
+        output_sample_tensor = {0: self.sample_output["data"]}
         self.net.process(self.name_sample, input_sample_tensor, output_sample_tensor)
 
         return int(self.sample_output["data"].asnumpy()[0][0])
@@ -277,8 +251,8 @@ class Qwen:
         self.next_embed_input["data"] = self.sample_output["data"]
         self.next_embed_input["data"].reshape(self.next_embed_input["shape"])
 
-        input_embed_tensors = {self.next_embed_input["name"]: self.next_embed_input["data"]}
-        output_embed_tensors = {self.next_embed_output["name"]: self.next_embed_output["data"]}
+        input_embed_tensors = {0: self.next_embed_input["data"]}
+        output_embed_tensors = {0: self.next_embed_output["data"]}
         # Embedding Layer Inference
         self.net.process(self.name_embed_cache, input_embed_tensors, output_embed_tensors)
         
@@ -292,14 +266,14 @@ class Qwen:
 
         # Transformer Block Inference
         for i in range(self.NUM_LAYERS):
-            inputs_block_cache_tensors = {self.next_hidden_input["name"]: self.next_hidden_tensor, 
-                                        self.next_pid["name"]: self.next_pid["data"], 
-                                        self.next_attention["name"]: self.next_attention["data"], 
-                                        self.cache_key_input[i]["name"]: self.past_key_output[i]["data"], 
-                                        self.cache_value_input[i]["name"]: self.past_value_output[i]["data"]}
-            outputs_block_cache_tensors = {self.next_hidden_output["name"]: self.next_hidden_tensor,
-                                        self.cache_key_output[i]["name"]: self.present_key["data"],
-                                        self.cache_value_output[i]["name"]: self.present_value["data"]}
+            inputs_block_cache_tensors = {0: self.next_hidden_tensor, 
+                                          1: self.next_pid["data"], 
+                                          2: self.next_attention["data"], 
+                                          3: self.past_key_output[i]["data"], 
+                                          4: self.past_value_output[i]["data"]}
+            outputs_block_cache_tensors = {0: self.next_hidden_tensor,
+                                           1: self.present_key["data"],
+                                           2: self.present_value["data"]}
             self.net.process(self.name_blocks_cache[i], inputs_block_cache_tensors, outputs_block_cache_tensors)
 
             # update kv_cache()
@@ -310,17 +284,17 @@ class Qwen:
         self.lm_input_tensor = self.next_hidden_tensor
         self.lm_input_tensor.reshape(self.lm_input["shape"])
         
-        input_lm_tensors = {self.lm_input["name"]: self.lm_input_tensor}
-        output_lm_tensors = {self.lm_output["name"]: self.lm_output["data"]}
+        input_lm_tensors = {0: self.lm_input_tensor}
+        output_lm_tensors = {0: self.lm_output["data"]}
         
         # Lm_head Inference
         self.net.process(self.name_lm, input_lm_tensors, output_lm_tensors)
 
         # sample
-        input_sample_tensor = {self.sample_input["name"]: self.lm_output["data"]}
-        output_sample_tensor = {self.sample_output["name"]: self.sample_output["data"]}
+        input_sample_tensor = {0: self.lm_output["data"]}
+        output_sample_tensor = {0: self.sample_output["data"]}
         self.net.process(self.name_sample, input_sample_tensor, output_sample_tensor)
-        
+
         return int(self.sample_output["data"].asnumpy()[0][0])
 
     def chat_stream(self, input, image, history, system=''):
